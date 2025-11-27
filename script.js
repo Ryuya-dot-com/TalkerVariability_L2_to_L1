@@ -19,6 +19,8 @@
   const messageEl = document.getElementById('message');
   const soundIconEl = document.getElementById('sound-icon');
   const participantInput = document.getElementById('participant-id');
+  const downloadBtn = document.getElementById('download-btn');
+  const configEl = document.getElementById('config');
 
   // Helpers
   const setStatus = (txt) => statusEl.textContent = txt;
@@ -77,7 +79,7 @@
     const total = order.length;
     for (const item of order) {
       const url = `${STIM_PATH}/${item.word}.mp3`;
-      setStatus(`音声プリロード中 ${loaded}/${total}: ${item.word}`);
+      setStatus(`音声プリロード中 (${loaded + 1}/${total})`);
       const res = await fetch(url);
       if (!res.ok) throw new Error(`音声が読み込めません: ${url}`);
       const arrBuf = await res.arrayBuffer();
@@ -113,6 +115,11 @@
     fixationEl.style.display = 'none';
     messageEl.style.display = 'none';
     soundIconEl.style.display = 'block';
+  }
+  function enterExperimentScreen() {
+    configEl.classList.add('hidden');
+    startBtn.classList.add('hidden');
+    downloadBtn.classList.add('hidden');
   }
 
   // PCM収集→WAVエンコード
@@ -299,6 +306,7 @@
 
     preloadBtn.disabled = true;
     startBtn.classList.add('hidden');
+    downloadBtn.classList.add('hidden');
     setLog('');
 
     try {
@@ -311,7 +319,7 @@
       showMessage('スペースキーで開始');
 
       startBtn.onclick = async () => {
-        startBtn.classList.add('hidden');
+        enterExperimentScreen();
         try {
           const { results, recordings } = await runTask(participantId, order, audioCtx, buffers, micStream);
           const zipBlob = await createZip(participantId, results, recordings);
@@ -327,6 +335,9 @@
         } catch (err) {
           console.error(err);
           setStatus(`エラー: ${err.message}`);
+          configEl.classList.remove('hidden');
+          startBtn.classList.remove('hidden');
+          document.body.classList.remove('running');
           preloadBtn.disabled = false;
         }
       };
