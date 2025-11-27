@@ -13,7 +13,6 @@
   // DOM
   const preloadBtn = document.getElementById('preload-btn');
   const startBtn = document.getElementById('start-btn');
-  const downloadBtn = document.getElementById('download-btn');
   const statusEl = document.getElementById('status');
   const logEl = document.getElementById('log');
   const fixationEl = document.getElementById('fixation');
@@ -116,17 +115,76 @@
     soundIconEl.style.display = 'block';
   }
 
-  function makeRecorder(stream, mimeType) {
-    const options = mimeType ? { mimeType } : undefined;
-    const recorder = new MediaRecorder(stream, options);
-    const chunks = [];
-    recorder.ondataavailable = (e) => { if (e.data && e.data.size > 0) chunks.push(e.data); };
-    const start = () => new Promise((resolve) => { recorder.start(); resolve(); });
-    const stopAfter = (ms) => new Promise((resolve) => {
-      recorder.onstop = () => resolve(new Blob(chunks, { type: recorder.mimeType }));
-      setTimeout(() => recorder.stop(), ms);
+  // PCM収集→WAVエンコード
+  function encodeWav(buffers, sampleRate) {
+    const totalLength = buffers.reduce((sum, buf) => sum + buf.length, 0);
+    const resultBuffer = new ArrayBuffer(44 + totalLength * 2);
+    const view = new DataView(resultBuffer);
+
+    function writeString(view, offset, string) {
+      for (let i = 0; i < string.length; i++) {
+        view.setUint8(offset + i, string.charCodeAt(i));
+      }
+    }
+
+    let offset = 0;
+    writeString(view, offset, 'RIFF'); offset += 4;
+    view.setUint32(offset, 36 + totalLength * 2, true); offset += 4;
+    writeString(view, offset, 'WAVE'); offset += 4;
+    writeString(view, offset, 'fmt '); offset += 4;
+    view.setUint32(offset, 16, true); offset += 4; // Subchunk1Size
+    view.setUint16(offset, 1, true); offset += 2; // PCM
+    view.setUint16(offset, 1, true); offset += 2; // mono
+    view.setUint32(offset, sampleRate, true); offset += 4;
+    view.setUint32(offset, sampleRate * 2, true); offset += 4; // byte rate
+    view.setUint16(offset, 2, true); offset += 2; // block align
+    view.setUint16(offset, 16, true); offset += 2; // bits per sample
+    writeString(view, offset, 'data'); offset += 4;
+    view.setUint32(offset, totalLength * 2, true); offset += 4;
+
+    let outOffset = offset;
+    buffers.forEach((buf) => {
+      for (let i = 0; i < buf.length; i++, outOffset += 2) {
+        const s = Math.max(-1, Math.min(1, buf[i]));
+        view.setInt16(outOffset, s < 0 ? s * 0x8000 : s * 0x7FFF, true);
+      }
     });
-    return { recorder, start, stopAfter };
+
+    return new Blob([view], { type: 'audio/wav' });
+  }
+
+  function makePcmRecorder(stream) {
+    const audioCtx = new (window.AudioContext || window.webkitAudioContext)({ sampleRate: 44100 });
+    const source = audioCtx.createMediaStreamSource(stream);
+    const bufferSize = 4096;
+    const processor = audioCtx.createScriptProcessor(bufferSize, 1, 1);
+    const chunks = [];
+    let recording = false;
+
+    processor.onaudioprocess = (e) => {
+      if (!recording) return;
+      const input = e.inputBuffer.getChannelData(0);
+      chunks.push(new Float32Array(input));
+    };
+
+    const start = async () => {
+      recording = true;
+      source.connect(processor);
+      processor.connect(audioCtx.destination);
+    };
+
+    const stopAfter = (ms) => new Promise((resolve) => {
+      setTimeout(() => {
+        recording = false;
+        processor.disconnect();
+        source.disconnect();
+        const wavBlob = encodeWav(chunks, audioCtx.sampleRate);
+        audioCtx.close();
+        resolve(wavBlob);
+      }, ms);
+    });
+
+    return { start, stopAfter };
   }
 
   function buildCsv(rows) {
@@ -166,12 +224,15 @@
       await audioCtx.resume();
     }
 
+    // Hide instructions after start
+    messageEl.style.display = 'none';
+    statusEl.textContent = '';
+
     const results = [];
     const recordings = [];
     const expStart = performance.now();
 
-    const mimeType = MediaRecorder.isTypeSupported('audio/webm;codecs=opus') ? 'audio/webm;codecs=opus' : undefined;
-    const recorderFactory = () => makeRecorder(micStream, mimeType);
+    const recorderFactory = () => makePcmRecorder(micStream);
 
     for (let idx = 0; idx < order.length; idx++) {
       const trial = order[idx];
@@ -181,7 +242,7 @@
       source.buffer = buffer;
       source.connect(audioCtx.destination);
 
-      const { recorder, start, stopAfter } = recorderFactory();
+      const { start, stopAfter } = recorderFactory();
 
       showSoundIcon();
       const now = performance.now();
@@ -194,7 +255,7 @@
       const recBlob = await blobPromise;
       const recEndMs = performance.now() - expStart;
 
-      const filename = `${participantId}_${trial.word}.webm`;
+      const filename = `${participantId}_${trial.word}.wav`;
       recordings.push({ filename, blob: recBlob });
 
       results.push({
@@ -214,7 +275,7 @@
     }
 
     showMessage('終了しました。お疲れさまでした。');
-    setStatus('結果をZipでダウンロードできます。');
+    setStatus('結果を準備しています...');
     return { results, recordings };
   }
 
@@ -238,7 +299,6 @@
 
     preloadBtn.disabled = true;
     startBtn.classList.add('hidden');
-    downloadBtn.classList.add('hidden');
     setLog('');
 
     try {
@@ -256,15 +316,14 @@
           const { results, recordings } = await runTask(participantId, order, audioCtx, buffers, micStream);
           const zipBlob = await createZip(participantId, results, recordings);
           const url = URL.createObjectURL(zipBlob);
-          downloadBtn.classList.remove('hidden');
-          downloadBtn.onclick = () => {
-            const a = document.createElement('a');
-            a.href = url;
-            a.download = `l2_to_l1_${participantId}.zip`;
-            document.body.appendChild(a);
-            a.click();
-            a.remove();
-          };
+          // 自動ダウンロード
+          const a = document.createElement('a');
+          a.href = url;
+          a.download = `l2_to_l1_${participantId}.zip`;
+          document.body.appendChild(a);
+          a.click();
+          a.remove();
+          setStatus('結果をダウンロードしました。');
         } catch (err) {
           console.error(err);
           setStatus(`エラー: ${err.message}`);
