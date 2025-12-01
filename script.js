@@ -1,14 +1,38 @@
 (() => {
   // Constants
-  const WORDS = [
-    'ardilla','basurero','caballo','cebolla','cinta','conejo',
-    'cuaderno','elote','fresas','gato','grapadora','hongos',
-    'lapiz','lechuga','loro','manzana','naranja','oso',
-    'pato','pez','reloj','sandia','tijeras','tiza',
-  ];
-  const STIM_PATH = 'real_stimuli_audio';
+  const AUDIO_BASE_URL = 'https://ryuya-dot-com.github.io/TalkerVariability_L2_to_L1/real_stimuli_audio';
+  const AUDIO_EXT = '.mp3';
   const RECORD_DURATION_MS = 6000; // 6 seconds
   const ITI_MS = 1500; // 1.5 seconds
+
+  const LIST1_TARGETS = [
+    { id: 1, list: 1, word: 'manzana' },
+    { id: 2, list: 1, word: 'oso' },
+    { id: 3, list: 1, word: 'reloj' },
+    { id: 4, list: 1, word: 'tijeras' },
+    { id: 5, list: 1, word: 'sandía' },
+    { id: 6, list: 1, word: 'pato' },
+    { id: 7, list: 1, word: 'grapadora' },
+    { id: 8, list: 1, word: 'cinta' },
+    { id: 9, list: 1, word: 'fresas' },
+    { id: 10, list: 1, word: 'tiza' },
+    { id: 11, list: 1, word: 'caballo' },
+    { id: 12, list: 1, word: 'elote' },
+  ];
+  const LIST2_TARGETS = [
+    { id: 13, list: 2, word: 'hongos' },
+    { id: 14, list: 2, word: 'cebolla' },
+    { id: 15, list: 2, word: 'cuaderno' },
+    { id: 16, list: 2, word: 'ardilla' },
+    { id: 17, list: 2, word: 'loro' },
+    { id: 18, list: 2, word: 'lechuga' },
+    { id: 19, list: 2, word: 'lápiz' },
+    { id: 20, list: 2, word: 'conejo' },
+    { id: 21, list: 2, word: 'gato' },
+    { id: 22, list: 2, word: 'naranja' },
+    { id: 23, list: 2, word: 'basurero' },
+    { id: 24, list: 2, word: 'pez' },
+  ];
 
   // DOM
   const preloadBtn = document.getElementById('preload-btn');
@@ -26,6 +50,7 @@
   const setStatus = (txt) => statusEl.textContent = txt;
   const setLog = (txt) => logEl.textContent = txt;
   const delay = (ms) => new Promise(res => setTimeout(res, ms));
+  const stripAccents = (str) => str.normalize('NFD').replace(/[\u0300-\u036f]/g, '');
 
   function mulberry32(seed) {
     return function() {
@@ -47,29 +72,35 @@
     const digits = pid.match(/\d+/g);
     return digits ? parseInt(digits.join(''), 10) : 0;
   };
+  const makeAudioFileName = (word) => `${stripAccents(word)}${AUDIO_EXT}`;
 
   // Build alternating, seeded order
   function buildOrder(participantId) {
     const n = parseNumericId(participantId);
     const rng = mulberry32(n * 1000 + 7);
-    const firstHalf = seededShuffle(WORDS.slice(0, 12), rng);
-    const secondHalf = seededShuffle(WORDS.slice(12), rng);
-    let takeFirst = rng() < 0.5; // deterministic by seed
+    const list1 = seededShuffle(LIST1_TARGETS, rng);
+    const list2 = seededShuffle(LIST2_TARGETS, rng);
+    let takeFirst = n % 2 === 1; // odd -> List 1 first, even -> List 2 first
     const order = [];
     let i = 0, j = 0;
-    while (i < firstHalf.length || j < secondHalf.length) {
-      if (takeFirst && i < firstHalf.length) {
-        order.push(firstHalf[i++]);
-      } else if (!takeFirst && j < secondHalf.length) {
-        order.push(secondHalf[j++]);
-      } else if (i < firstHalf.length) {
-        order.push(firstHalf[i++]);
-      } else if (j < secondHalf.length) {
-        order.push(secondHalf[j++]);
+    while (i < list1.length || j < list2.length) {
+      if (takeFirst && i < list1.length) {
+        order.push(list1[i++]);
+      } else if (!takeFirst && j < list2.length) {
+        order.push(list2[j++]);
+      } else if (i < list1.length) {
+        order.push(list1[i++]);
+      } else if (j < list2.length) {
+        order.push(list2[j++]);
       }
       takeFirst = !takeFirst;
     }
-    return order.map((word) => ({ word, word_id: WORDS.indexOf(word) + 1 }));
+    return order.map((item) => ({
+      word: item.word,
+      word_id: item.id,
+      list: item.list,
+      audio_file: makeAudioFileName(item.word),
+    }));
   }
 
   async function preloadAudio(order) {
@@ -78,7 +109,7 @@
     let loaded = 0;
     const total = order.length;
     for (const item of order) {
-      const url = `${STIM_PATH}/${item.word}.mp3`;
+      const url = `${AUDIO_BASE_URL}/${item.audio_file}`;
       setStatus(`音声プリロード中 (${loaded + 1}/${total})`);
       const res = await fetch(url);
       if (!res.ok) throw new Error(`音声が読み込めません: ${url}`);
@@ -195,13 +226,14 @@
   }
 
   function buildCsv(rows) {
-    const header = ['trial','word','word_id','playback_onset_ms','recording_start_ms','recording_end_ms','iti_ms','participant_id'];
+    const header = ['trial','word','word_id','list','playback_onset_ms','recording_start_ms','recording_end_ms','iti_ms','participant_id'];
     const lines = [header.join(',')];
     rows.forEach((r) => {
       lines.push([
         r.trial,
         r.word,
         r.word_id,
+        r.list,
         r.playback_onset_ms.toFixed(3),
         r.recording_start_ms.toFixed(3),
         r.recording_end_ms.toFixed(3),
@@ -269,6 +301,7 @@
         trial: idx + 1,
         word: trial.word,
         word_id: trial.word_id,
+        list: trial.list,
         playback_onset_ms: playbackOnset,
         recording_start_ms: recStartMs,
         recording_end_ms: recEndMs,
