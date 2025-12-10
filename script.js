@@ -249,7 +249,14 @@
   }
 
   function buildCsv(rows) {
-    const header = ['trial','attempt','voice','word','word_id','list','audio_file','playback_onset_ms','playback_end_ms','recording_start_ms','recording_end_ms','iti_ms','participant_id'];
+    const header = [
+      'trial','attempt','voice','word','word_id','list','audio_file',
+      'trial_start_epoch_ms',
+      'playback_onset_ms','playback_end_ms',
+      'recording_start_ms','recording_end_ms',
+      'recording_start_epoch_ms','recording_end_epoch_ms',
+      'iti_ms','participant_id',
+    ];
     const lines = [header.join(',')];
     rows.forEach((r) => {
       lines.push([
@@ -260,10 +267,13 @@
         r.word_id,
         r.list,
         r.audio_file,
+        r.trial_start_epoch_ms,
         r.playback_onset_ms.toFixed(3),
         r.playback_end_ms.toFixed(3),
         r.recording_start_ms.toFixed(3),
         r.recording_end_ms.toFixed(3),
+        r.recording_start_epoch_ms,
+        r.recording_end_epoch_ms,
         r.iti_ms,
         r.participant_id,
       ].join(','));
@@ -296,7 +306,6 @@
 
     const results = [];
     const recordings = [];
-    const expStart = performance.now();
     const mixDest = audioCtx.createMediaStreamDestination();
     const micSource = audioCtx.createMediaStreamSource(micStream);
     micSource.connect(mixDest); // mic only to recorder, not to speakers
@@ -315,17 +324,23 @@
 
       const { start, stopAfter } = recorderFactory();
 
-      showSoundIcon();
-      const now = performance.now();
-      const playbackOnset = now - expStart;
-      const playbackEnd = playbackOnset + buffer.duration * 1000;
+      const trialStart = performance.now();
+      const trialStartEpochMs = Date.now();
+
       await start(); // begin recording before playback to capture full audio
+      const recStartMs = performance.now() - trialStart;
+      const recStartEpochMs = trialStartEpochMs + recStartMs;
+
+      showSoundIcon();
+      const playbackOnset = performance.now() - trialStart;
+      const playbackEnd = playbackOnset + buffer.duration * 1000;
+
       source.start();
-      const recStartMs = performance.now() - expStart;
       const blobPromise = stopAfter(RECORD_DURATION_MS);
 
       const recBlob = await blobPromise;
-      const recEndMs = performance.now() - expStart;
+      const recEndMs = performance.now() - trialStart;
+      const recEndEpochMs = trialStartEpochMs + recEndMs;
 
       const safeWord = stripAccents(trial.word);
       const filename = `${participantId}_trial${idx + 1}_${trial.voice}_${safeWord}.wav`;
@@ -339,10 +354,13 @@
         word_id: trial.word_id,
         list: trial.list,
         audio_file: trial.audio_path,
+        trial_start_epoch_ms: trialStartEpochMs,
         playback_end_ms: playbackEnd,
         playback_onset_ms: playbackOnset,
         recording_start_ms: recStartMs,
         recording_end_ms: recEndMs,
+        recording_start_epoch_ms: recStartEpochMs,
+        recording_end_epoch_ms: recEndEpochMs,
         iti_ms: ITI_MS,
         participant_id: participantId,
       });
