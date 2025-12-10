@@ -1,6 +1,6 @@
 (() => {
   // Constants
-  const AUDIO_BASE_URL = 'https://ryuya-dot-com.github.io/TalkerVariability_L2_to_L1/real_stimuli_audio';
+  const AUDIO_BASE_PATH = 'Target_Stimuli';
   const AUDIO_EXT = '.mp3';
   const RECORD_DURATION_MS = 6000; // 6 seconds
   const ITI_MS = 1500; // 1.5 seconds
@@ -73,6 +73,7 @@
     return digits ? parseInt(digits.join(''), 10) : 0;
   };
   const makeAudioFileName = (word) => `${stripAccents(word)}${AUDIO_EXT}`;
+  const makeAudioPath = (word, voice) => `${AUDIO_BASE_PATH}/${voice}/${makeAudioFileName(word)}`;
 
   // Build alternating, seeded order
   function buildOrder(participantId) {
@@ -95,27 +96,49 @@
       }
       takeFirst = !takeFirst;
     }
-    return order.map((item) => ({
+    const baseOrder = order.map((item) => ({
       word: item.word,
       word_id: item.id,
       list: item.list,
       audio_file: makeAudioFileName(item.word),
     }));
+
+    const firstVoice = n % 2 === 0 ? 'female' : 'male';
+    const secondVoice = firstVoice === 'female' ? 'male' : 'female';
+
+    const trials = [
+      ...baseOrder.map((item) => ({
+        ...item,
+        attempt: 1,
+        voice: firstVoice,
+        audio_path: makeAudioPath(item.word, firstVoice),
+      })),
+      ...baseOrder.map((item) => ({
+        ...item,
+        attempt: 2,
+        voice: secondVoice,
+        audio_path: makeAudioPath(item.word, secondVoice),
+      })),
+    ];
+
+    return trials;
   }
 
   async function preloadAudio(order) {
     const audioCtx = new (window.AudioContext || window.webkitAudioContext)();
     const buffers = new Map();
     let loaded = 0;
-    const total = order.length;
-    for (const item of order) {
-      const url = `${AUDIO_BASE_URL}/${item.audio_file}`;
+    const uniquePaths = Array.from(new Map(order.map((item) => [item.audio_path, item])).values());
+    const total = uniquePaths.length;
+    for (const item of uniquePaths) {
+      const url = item.audio_path;
       setStatus(`音声プリロード中 (${loaded + 1}/${total})`);
       const res = await fetch(url);
       if (!res.ok) throw new Error(`音声が読み込めません: ${url}`);
       const arrBuf = await res.arrayBuffer();
       const buffer = await audioCtx.decodeAudioData(arrBuf);
-      buffers.set(item.word, buffer);
+      const key = `${item.voice}:${item.word}`;
+      buffers.set(key, buffer);
       loaded += 1;
     }
     setStatus(`音声プリロード完了 (${loaded}/${total})`);
@@ -226,14 +249,17 @@
   }
 
   function buildCsv(rows) {
-    const header = ['trial','word','word_id','list','playback_onset_ms','recording_start_ms','recording_end_ms','iti_ms','participant_id'];
+    const header = ['trial','attempt','voice','word','word_id','list','audio_file','playback_onset_ms','recording_start_ms','recording_end_ms','iti_ms','participant_id'];
     const lines = [header.join(',')];
     rows.forEach((r) => {
       lines.push([
         r.trial,
+        r.attempt,
+        r.voice,
         r.word,
         r.word_id,
         r.list,
+        r.audio_file,
         r.playback_onset_ms.toFixed(3),
         r.recording_start_ms.toFixed(3),
         r.recording_end_ms.toFixed(3),
@@ -275,7 +301,8 @@
 
     for (let idx = 0; idx < order.length; idx++) {
       const trial = order[idx];
-      const buffer = buffers.get(trial.word);
+      const bufferKey = `${trial.voice}:${trial.word}`;
+      const buffer = buffers.get(bufferKey);
       if (!buffer) throw new Error(`Audio buffer missing for ${trial.word}`);
       const source = audioCtx.createBufferSource();
       source.buffer = buffer;
@@ -294,14 +321,18 @@
       const recBlob = await blobPromise;
       const recEndMs = performance.now() - expStart;
 
-      const filename = `${participantId}_${trial.word}.wav`;
+      const safeWord = stripAccents(trial.word);
+      const filename = `${participantId}_trial${idx + 1}_${trial.voice}_${safeWord}.wav`;
       recordings.push({ filename, blob: recBlob });
 
       results.push({
         trial: idx + 1,
+        attempt: trial.attempt,
+        voice: trial.voice,
         word: trial.word,
         word_id: trial.word_id,
         list: trial.list,
+        audio_file: trial.audio_path,
         playback_onset_ms: playbackOnset,
         recording_start_ms: recStartMs,
         recording_end_ms: recEndMs,
