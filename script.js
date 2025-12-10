@@ -249,7 +249,7 @@
   }
 
   function buildCsv(rows) {
-    const header = ['trial','attempt','voice','word','word_id','list','audio_file','playback_onset_ms','recording_start_ms','recording_end_ms','iti_ms','participant_id'];
+    const header = ['trial','attempt','voice','word','word_id','list','audio_file','playback_onset_ms','playback_end_ms','recording_start_ms','recording_end_ms','iti_ms','participant_id'];
     const lines = [header.join(',')];
     rows.forEach((r) => {
       lines.push([
@@ -261,6 +261,7 @@
         r.list,
         r.audio_file,
         r.playback_onset_ms.toFixed(3),
+        r.playback_end_ms.toFixed(3),
         r.recording_start_ms.toFixed(3),
         r.recording_end_ms.toFixed(3),
         r.iti_ms,
@@ -296,8 +297,11 @@
     const results = [];
     const recordings = [];
     const expStart = performance.now();
+    const mixDest = audioCtx.createMediaStreamDestination();
+    const micSource = audioCtx.createMediaStreamSource(micStream);
+    micSource.connect(mixDest); // mic only to recorder, not to speakers
 
-    const recorderFactory = () => makePcmRecorder(micStream);
+    const recorderFactory = () => makePcmRecorder(mixDest.stream);
 
     for (let idx = 0; idx < order.length; idx++) {
       const trial = order[idx];
@@ -307,14 +311,16 @@
       const source = audioCtx.createBufferSource();
       source.buffer = buffer;
       source.connect(audioCtx.destination);
+      source.connect(mixDest); // include playback in recorded mix
 
       const { start, stopAfter } = recorderFactory();
 
       showSoundIcon();
       const now = performance.now();
       const playbackOnset = now - expStart;
+      const playbackEnd = playbackOnset + buffer.duration * 1000;
+      await start(); // begin recording before playback to capture full audio
       source.start();
-      await start();
       const recStartMs = performance.now() - expStart;
       const blobPromise = stopAfter(RECORD_DURATION_MS);
 
@@ -333,6 +339,7 @@
         word_id: trial.word_id,
         list: trial.list,
         audio_file: trial.audio_path,
+        playback_end_ms: playbackEnd,
         playback_onset_ms: playbackOnset,
         recording_start_ms: recStartMs,
         recording_end_ms: recEndMs,

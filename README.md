@@ -17,8 +17,8 @@ Run `index.html` in a modern browser (offline OK). Audio is loaded locally from 
 - Odd ID: attempt 1 = male, attempt 2 = female.
 
 ## Outputs (zip)
-- `results_{participantId}.csv` with columns: `trial,attempt,voice,word,word_id,list,audio_file,playback_onset_ms,recording_start_ms,recording_end_ms,iti_ms,participant_id` (times in ms from task start).
-- One WAV per trial: `{participantId}_trial{N}_{voice}_{word}.wav` (accents stripped in filename).
+- `results_{participantId}.csv` with columns: `trial,attempt,voice,word,word_id,list,audio_file,playback_onset_ms,playback_end_ms,recording_start_ms,recording_end_ms,iti_ms,participant_id` (times in ms from task start). `playback_end_ms` gives audio completion for latency analyses.
+- One WAV per trial: `{participantId}_trial{N}_{voice}_{word}.wav` (accents stripped). Each recording includes both the played audio and the participant’s speech, so you can align onset relative to playback end.
 
 ## Requirements
 - Browser with Web Audio + getUserMedia (Chrome/Firefox etc.).
